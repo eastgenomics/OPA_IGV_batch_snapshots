@@ -1,21 +1,58 @@
 #!/bin/bash
 
-# Get user input
+# Required filepaths and user input
 
 read -r -p "Please enter filepath from the 'OPA Results' folder. TODO: provide example " run_input
-# for testing, input would be "others\OPA_IGV_batch_snapshots_testing\23-OPAD19_B_NP_20062023_2"
 drive_filepath="\\\cuh_nas120\Haematology\Molecular Haemato-Oncology\A03_Test_Solid\OPA on Genexus\OPA Results\\${run_input}"
-# TODO: error checks: filepath is valid/exists, folder structure (sample folders with bam files)
 opa_id=$(basename "${drive_filepath}")
 
 read -r -p "Please enter filepath for the Sample Sheet CSV from the 'OPA' folder in the ClinGen drive. TODO: provide example " sample_sheet_input
-# for testing, input would be "23-OPAD19_23-OPAR4_20062023\23-OPAD19_23-OPAR4_SampleSheet_20062023.csv"
 sample_sheet="\\\clingen\CG\Regional Genetics Laboratories\Molecular Genetics\Data archive\Sequencing HT\Genexus\OPA\\${sample_sheet_input}"
-# TODO: error checks: filepath/file is valid/exists, file is a csv, check for sample sheet headers
 
-# TODO: not yet made dynamic, CSV needs to be finalised
+# TODO: store somewhere and use file path
 opa_genelist="OPA_GeneList.csv"
 
+# Error checks for user input -- required
+
+header=$(head -n 1 "$sample_sheet")
+# Get first and last parts of OPA run name
+first=$(cut -d_ -f1 <<< $opa_id)
+last=${opa_id##*_}
+
+if [[ ! -d "$drive_filepath" ]] || [[ ! -f "$sample_sheet" ]]; then
+    echo -e "The filepath to the OPA samples and/or the sample sheet does not exist. Please enter a valid filepath."
+    exit 1
+elif [[ ! "$sample_sheet" == *.csv ]]; then
+    echo "Sample sheet is not a csv."
+    exit 1
+#should this be case insensitive?
+elif ! echo $header | grep -qwi "sample name" || ! echo $header | grep -qwi "cancer type"; then
+    echo "Sample sheet is missing required headings: 'Sample Sheet' and 'Cancer Type'."
+    exit 1
+elif [[ ! "$sample_sheet" == *"$first"* ]] || [[ ! "$sample_sheet" == *"$last"* ]]; then
+    echo "Name of sample sheet file does not match OPA run name. Please check again."
+    exit 1
+fi
+
+# Find all OPA sample directories
+sp_folders=$(find "$drive_filepath" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
+
+# Warning messages and user confirmation
+awk -F',' -v find_output="$sp_folders" 'NR > 1 { if ($1 != "" && index(find_output, $1) == 0) { print "Sample not found:", $1 } else { print "Sample found:", $1 } }' "$sample_sheet"
+read -r -p "Batch script will only include found samples. Would you like to continue (y/n)? " proceed
+case "$proceed" in 
+  y|Y) echo "Generating batch script...";;
+  n|N ) exit 0;;
+  *) echo "Please enter either 'y' or 'n'";;
+esac
+
+# Get column number for sample name and cancer type
+# depends on the answer to case insensitive above
+sample_name_field=$(awk -v RS=',' '/Sample Name/{print NR}' "$sample_sheet")
+cancer_type_field=$(awk -v RS=',' '/Cancer Type/{print NR}' "$sample_sheet")
+
+# Set flanking sequences value
+flanking=15
 
 ####################
 # Creates the goto and snapshot commands of the IGV batch file
@@ -25,54 +62,58 @@ opa_genelist="OPA_GeneList.csv"
 #   IGV batch file
 ####################
 create_snapshots () {
-    gene_arr=("$@")
-    for exon in "${gene_arr[@]}";
+    exon_arr=("$@")
+    for entry in "${exon_arr[@]}";
     do
-        chr="$(awk -F, -v val=$exon '$4 == val {print $1}' "$opa_genelist")"
-        start="$(awk -F, -v val=$exon '$4 == val {print $2}' "$opa_genelist")"
-        stop="$(awk -F, -v val=$exon '$4 == val {print $3}' "$opa_genelist")"
-        echo goto ${chr}:${start}-${stop}
-        echo snapshot ${exon}.png
+        IFS='_' read -ra gene_exon <<< "$entry"
+        gene="${gene_exon[0]}"
+        exon="${gene_exon[1]}"
+        chr="$(awk -F, -v val1=$gene -v val2=$exon '$4 == val1 && $6 == val2 {print $1}' "$opa_genelist")"
+        start="$(awk -F, -v val1=$gene -v val2=$exon '$4 == val1 && $6 == val2 {print $2}' "$opa_genelist")"
+        stop="$(awk -F, -v val1=$gene -v val2=$exon '$4 == val1 && $6 == val2 {print $3}' "$opa_genelist")"
+        start_flanked=$((start+1-flanking))
+        stop_flanked=$((stop+flanking))
+        echo goto chr${chr}:${start_flanked}-${stop_flanked}
+        echo snapshot ${gene}_Ex${exon}.png
     done >> ${opa_id}_IGV.batch
 }
-
-
-# find all OPA sample directories from user input
-sp_folders=$(find "$drive_filepath" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
 
 for sp_id in $sp_folders
 do
     bam_file="${drive_filepath}\\${sp_id}\\merged.bam.ptrim.bam"
 
-    # create header for IGV batch script and append
-    batch_beginning="snapshotDirectory '\\\\${drive_filepath}\\${sp_id}\\snapshots'\nnew\nload '\\\\$bam_file'\nsort position\ncollapse\ncolorBy READ_STRAND"
+    # Create header for IGV batch script and append
+    batch_beginning="snapshotDirectory '\\\\${drive_filepath}\\${sp_id}\\snapshots'\nnew\nload '\\\\$bam_file'\nsort position\ncollapse\ncolorBy READ_STRAND\npreference SAM.SHOW_SOFT_CLIPPED true"
     echo "$(echo -e $batch_beginning)" >> ${opa_id}_IGV.batch
 
-    # get tumour type for each sample
-    tumour_type="$(awk -F, -v val=$sp_id '$1 == val {print $8}' "$sample_sheet")"
+    # Ignore any extensions after _ if present (for SP-ID_rpt samples)
+    sp_id_no_rpt=${sp_id%_*}
 
-    if [[ ${tumour_type,,} == "colorectal cancer" ]]; then
-        genes=("BRAF_Ex11" "BRAF_Ex15" "KRAS_Ex2" "KRAS_Ex3" "KRAS_Ex4" "NRAS_Ex2" "NRAS_Ex3" "NRAS_Ex4")
-        create_snapshots "${genes[@]}"
-    # TODO: incomplete regions for breast cancer, it's missing PIK3CA ex 21. Also fix bug for test sample that doesn't read breast cancer
-    elif [[ ${tumour_type,,} == "breast cancer" ]]; then 
-        genes=("PIK3CA_Ex2" "PIK3CA_Ex3" "PIK3CA_Ex5" "PIK3CA_Ex8" "PIK3CA_Ex10" "PIK3CA_Ex11" "PIK3CA_Ex20")
-        create_snapshots "${genes[@]}"
-    elif [[ ${tumour_type,,} == "lung cancer" || ${tumour_type,,} == "non-small cell lung cancer" ]]; then
-        genes=("EGFR_Ex18" "EGFR_Ex19" "EGFR_Ex20" "EGFR_Ex21" "MET_Ex14")
-        create_snapshots "${genes[@]}"
-    elif [[ ${tumour_type,,} == "melanoma" ]]; then
-        genes=("BRAF_Ex11" "BRAF_Ex15" "NRAS_Ex2" "NRAS_Ex3" "NRAS_Ex4" "KIT_Ex8" "KIT_Ex9" "KIT_Ex10" "KIT_Ex11" "KIT_Ex13" "KIT_Ex14" "KIT_Ex17" "KIT_Ex18")
-        create_snapshots "${genes[@]}"
-    elif [[ ${tumour_type,,} == "gist" ]]; then
-        genes=("BRAF_Ex11" "BRAF_Ex15" "KIT_Ex8" "KIT_Ex9" "KIT_Ex10" "KIT_Ex11" "KIT_Ex13" "KIT_Ex14" "KIT_Ex17" "KIT_Ex18" "PDGFRA_Ex11" "PDGFRA_Ex12" "PDGFRA_Ex14" "PDGFRA_Ex18")
-        create_snapshots "${genes[@]}"
-    elif [[ ${tumour_type,,} == "brain cancer" ]]; then
-        genes=("IDH1_Ex4" "IDH1_Ex6" "IDH1_Ex7" "IDH2_Ex4" "IDH2_Ex7")
-        create_snapshots "${genes[@]}"
-    else
-        echo 'Tumour type not found. Outputting all coordinates.'
-        all_genes_arr=( $( cut -d ',' -f4 OPA_GeneList.csv ) )
-        create_snapshots "${all_genes_arr[@]}"
-    fi
+    # Get tumour type for each sample
+    tumour_type="$(awk -F, -v sp_id=$sp_id_no_rpt -v sample_field=$sample_name_field -v type_field=$cancer_type_field= '$sample_field == sp_id {print $type_field}' "$sample_sheet")"
+
+    case ${tumour_type,,} in
+        *"colorectal cancer"*)
+            gene_exon_pair=("BRAF_11" "BRAF_15" "KRAS_2" "KRAS_3")
+            ;;
+        *"breast cancer"*)
+            gene_exon_pair=("PIK3CA_2" "PIK3CA_8")
+            ;;
+        *"non-small cell lung cancer"*)
+            gene_exon_pair=("EGFR_18" "EGFR_19" "EGFR_20" "MET_14")
+            ;;
+        *melanoma*)
+            gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11")
+            ;;
+        *gist*)
+            gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11" "PDGFRA_11" "PDGFRA_12" "PDGFRA_18")
+            ;;
+        *)
+            echo 'Tumour type not found. Outputting no coordinates for' $sp_id
+            continue
+            ;;
+    esac
+    create_snapshots "${gene_exon_pair[@]}"
 done
+
+echo "Batch script generated."
