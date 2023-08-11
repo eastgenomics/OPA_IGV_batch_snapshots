@@ -27,7 +27,7 @@ elif [[ ! "$sample_sheet" == *.csv ]]; then
     echo "Sample sheet is not a csv."
     exit 1
 elif ! echo $sample_sheet_header | grep -qwi "sample name" || ! echo $sample_sheet_header | grep -qwi "cancer type"; then
-    echo "Sample sheet is missing required headings: 'Sample Sheet' and 'Cancer Type'."
+    echo "Sample sheet is missing required headings: 'Sample Name' and 'Cancer Type'."
     exit 1
 elif [[ ! "$sample_sheet" == *"$opa_id"* ]] || [[ ! "$sample_sheet" == *"$opa_date"* ]]; then
     echo "Name of sample sheet file does not match OPA run name. Please check again."
@@ -116,7 +116,7 @@ do
         *melanoma*)
             gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11")
             ;;
-        *gist*)
+        *"gastrointestinal stromal tumor"*)
             gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11" "PDGFRA_11" "PDGFRA_12" "PDGFRA_18")
             ;;
         *)
