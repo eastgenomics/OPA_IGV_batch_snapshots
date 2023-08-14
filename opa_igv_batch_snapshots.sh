@@ -47,7 +47,7 @@ if [[ -n "$samples_not_found" ]]; then
     while true; do
         read -r -p "Would you like to continue (y/n)? " proceed
         case "$proceed" in 
-            y|Y) echo "Generating batch script..."; break;;
+            y|Y) break;;
             n|N ) exit 0;;
             *) echo "Please enter either 'y' or 'n'";;
         esac
@@ -60,6 +60,9 @@ cancer_type_field=$(awk -v RS=',' -v IGNORECASE=1 '/Cancer Type/{print NR}' "$sa
 
 # Set flanking sequences value
 flanking=15
+
+# Update user that batch script is generating
+echo "Generating batch script..."
 
 ####################
 # Creates the goto and snapshot commands of the IGV batch file
@@ -125,6 +128,7 @@ do
             ;;
     esac
     create_snapshots "$sp_id" "${gene_exon_pair[@]}"
+    echo 'Sample' $sp_id 'has been processed'
 done
 
 # Move batch script to OPA run folder
