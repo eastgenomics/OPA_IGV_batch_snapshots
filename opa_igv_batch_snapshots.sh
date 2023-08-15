@@ -108,7 +108,7 @@ do
 
     case ${tumour_type,,} in
         *"colorectal cancer"*)
-            gene_exon_pair=("BRAF_11" "BRAF_15" "KRAS_2" "KRAS_3")
+            gene_exon_pair=("BRAF_11" "BRAF_15" "KRAS_2" "KRAS_3" "NRAS_2" "NRAS_3")
             ;;
         *"breast cancer"*)
             gene_exon_pair=("PIK3CA_2" "PIK3CA_8")
@@ -117,7 +117,7 @@ do
             gene_exon_pair=("EGFR_18" "EGFR_19" "EGFR_20" "MET_14")
             ;;
         *melanoma*)
-            gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11")
+            gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11" "NRAS_2" "NRAS_3")
             ;;
         *"gastrointestinal stromal tumor"*)
             gene_exon_pair=("BRAF_11" "BRAF_15" "KIT_8" "KIT_9" "KIT_10" "KIT_11" "PDGFRA_11" "PDGFRA_12" "PDGFRA_18")
